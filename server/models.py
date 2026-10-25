@@ -27,12 +27,15 @@ class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     sender_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     receiver_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+
+    message_type = db.Column(db.String(20), default='text')
     ciphertext = db.Column(db.Text, nullable=False)
+    file_name = db.Column(db.String(255), nullable=True)
+
     aes_iv = db.Column(db.String(100), nullable=False)
     encrypted_key_sender = db.Column(db.Text, nullable=False)
     encrypted_key_receiver = db.Column(db.Text, nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-
+    timestamp = db.Column(db.Integer, nullable=False)
     # Relationships
     sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_messages')
     receiver = db.relationship('User', foreign_keys=[receiver_id], backref='received_messages')
@@ -41,12 +44,12 @@ class Message(db.Model):
         return {
             'id': self.id,
             'sender_id': self.sender_id,
-            'sender_username': self.sender.username if self.sender else None,
             'receiver_id': self.receiver_id,
-            'receiver_username': self.receiver.username if self.receiver else None,
+            'message_type': self.message_type,
             'ciphertext': self.ciphertext,
+            'file_name': self.file_name,
             'aes_iv': self.aes_iv,
             'encrypted_key_sender': self.encrypted_key_sender,
             'encrypted_key_receiver': self.encrypted_key_receiver,
-            'timestamp': self.timestamp.isoformat()
+            'timestamp': self.timestamp
         }

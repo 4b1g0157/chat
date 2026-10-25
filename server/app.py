@@ -1,5 +1,8 @@
+import eventlet
+eventlet.monkey_patch()
 import os
 import time
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity, decode_token
@@ -20,7 +23,7 @@ db.init_app(app)
 jwt = JWTManager(app)
 
 # 初始化 SocketIO 並開放全網域連線
-socketio = SocketIO(app, cors_allowed_origins="*", logger=True, engineio_logger=True)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', logger=True, engineio_logger=True)
 
 with app.app_context():
     db.create_all()
@@ -145,7 +148,7 @@ def handle_join(data):
 
 @socketio.on('send_message')
 def handle_send_message(data):
-    # 從安全的 session 中取得發送者 ID，防止前端偽造[cite: 3]
+    # 從安全的 session 中取得發送者 ID，防止前端偽造
     from flask import session
     sender_id = session.get('socket_user_id')
     if not sender_id:
@@ -153,10 +156,43 @@ def handle_send_message(data):
         return
 
     recipient_id = data.get('recipient_id') or data.get('receiver_id')
+    
+    # 新增：接收訊息類型與檔名（預設為文字 text）
+    message_type = data.get('message_type', 'text')
+    file_name = data.get('file_name')
+    
     ciphertext = data.get('ciphertext')
     aes_iv = data.get('aes_iv')
     encrypted_key_sender = data.get('encrypted_key_sender')
     encrypted_key_receiver = data.get('encrypted_key_receiver')
+    
+    # 檢查必要欄位（文字與檔案都需要 ciphertext, aes_iv 與加密金鑰）
+    if not all([recipient_id, ciphertext, aes_iv, encrypted_key_sender, encrypted_key_receiver]):
+        emit('error', {'message': '缺少必要參數'})
+        return
+        
+    try:
+        msg = Message(
+            sender_id=int(sender_id),
+            receiver_id=int(recipient_id),
+            message_type=message_type,
+            ciphertext=ciphertext,
+            file_name=file_name,
+            aes_iv=aes_iv,
+            encrypted_key_sender=encrypted_key_sender,
+            encrypted_key_receiver=encrypted_key_receiver,
+            timestamp=int(time.time())
+        )
+        db.session.add(msg)
+        db.session.commit()
+        
+        payload = msg.to_dict()
+        # 即時推播給收件者與發件者
+        socketio.emit('receive_message', payload, room=f"user_{recipient_id}")
+        socketio.emit('receive_message', payload, room=f"user_{sender_id}")
+    except Exception as e:
+        db.session.rollback()
+        emit('error', {'message': '資料庫儲存失敗'})
     
     # 確保所有加密與金鑰欄位皆有傳入，符合 models.py 的規定[cite: 11]
     if not all([recipient_id, ciphertext, aes_iv, encrypted_key_sender, encrypted_key_receiver]):
