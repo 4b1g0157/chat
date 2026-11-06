@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { decryptPrivateKey } from '../utils/crypto';
+import { decryptPrivateKey, exportPrivateKeyToJwk } from '../utils/crypto';
 
 export default function Login({ onLoginSuccess, onSwitchToRegister }) {
     const [username, setUsername] = useState('');
@@ -45,11 +45,15 @@ export default function Login({ onLoginSuccess, onSwitchToRegister }) {
                 throw new Error('金鑰解密失敗：安全密碼（Passphrase）錯誤，無法還原私鑰！');
             }
 
-            // Step 3: Callback with authenticated session & decrypted private key
+            // 💡 Step 3: Export CryptoKey to JWK format for localStorage persistence
+            const privateKeyJwk = await exportPrivateKeyToJwk(decryptedPrivateKeyObj);
+
+            // Step 4: Callback with authenticated session, decrypted private key & its JWK form
             onLoginSuccess({
                 token: access_token,
                 user: user,
-                privateKey: decryptedPrivateKeyObj
+                privateKey: decryptedPrivateKeyObj,
+                privateKeyJwk: privateKeyJwk
             });
 
         } catch (err) {

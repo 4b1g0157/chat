@@ -94,6 +94,32 @@ def get_users():
     users = User.query.filter(User.id != current_user_id).all()
     return jsonify([u.to_dict() for u in users]), 200
 
+@app.route('/api/friends', methods=['GET'])
+@jwt_required()
+def get_friends():
+    current_user_id = int(get_jwt_identity())
+    users = User.query.filter(User.id != current_user_id).all()
+    return jsonify([u.to_dict() for u in users]), 200
+
+@app.route('/api/friends/add', methods=['POST'])
+@jwt_required()
+def add_friend():
+    current_user_id = int(get_jwt_identity())
+    data = request.get_json()
+    if not data or not data.get('username'):
+        return jsonify({'error': '請輸入使用者名稱'}), 400
+        
+    target_username = data.get('username').strip()
+    target_user = User.query.filter_by(username=target_username).first()
+    
+    if not target_user:
+        return jsonify({'error': '找不到該使用者'}), 404
+        
+    if target_user.id == current_user_id:
+        return jsonify({'error': '不能將自己加為好友'}), 400
+        
+    return jsonify({'message': '加好友成功', 'friend': target_user.to_dict()}), 200
+
 @app.route('/api/users/<username>/public-key', methods=['GET'])
 @jwt_required()
 def get_user_public_key(username):
@@ -129,7 +155,6 @@ def handle_connect(auth):
         decoded = decode_token(token)
         user_id = decoded['sub']
         
-        # 將 user_id 暫存於 flask 的 session 中，供後續發送訊息安全使用[cite: 3]
         from flask import session
         session['socket_user_id'] = user_id
         
@@ -148,7 +173,6 @@ def handle_join(data):
 
 @socketio.on('send_message')
 def handle_send_message(data):
-    # 從安全的 session 中取得發送者 ID，防止前端偽造
     from flask import session
     sender_id = session.get('socket_user_id')
     if not sender_id:
@@ -157,7 +181,6 @@ def handle_send_message(data):
 
     recipient_id = data.get('recipient_id') or data.get('receiver_id')
     
-    # 新增：接收訊息類型與檔名（預設為文字 text）
     message_type = data.get('message_type', 'text')
     file_name = data.get('file_name')
     
@@ -166,9 +189,8 @@ def handle_send_message(data):
     encrypted_key_sender = data.get('encrypted_key_sender')
     encrypted_key_receiver = data.get('encrypted_key_receiver')
     
-    # 檢查必要欄位（文字與檔案都需要 ciphertext, aes_iv 與加密金鑰）
     if not all([recipient_id, ciphertext, aes_iv, encrypted_key_sender, encrypted_key_receiver]):
-        emit('error', {'message': '缺少必要參數'})
+        emit('error', {'message': '缺少必要參數或加密欄位'})
         return
         
     try:
@@ -187,41 +209,40 @@ def handle_send_message(data):
         db.session.commit()
         
         payload = msg.to_dict()
-        # 即時推播給收件者與發件者
-        socketio.emit('receive_message', payload, room=f"user_{recipient_id}")
-        socketio.emit('receive_message', payload, room=f"user_{sender_id}")
-    except Exception as e:
-        db.session.rollback()
-        emit('error', {'message': '資料庫儲存失敗'})
-    
-    # 確保所有加密與金鑰欄位皆有傳入，符合 models.py 的規定[cite: 11]
-    if not all([recipient_id, ciphertext, aes_iv, encrypted_key_sender, encrypted_key_receiver]):
-        emit('error', {'message': '缺少必要參數或加密欄位'})
-        return
         
-    try:
-        # 將訊息儲存至資料庫
-        msg = Message(
-            sender_id=int(sender_id),
-            receiver_id=int(recipient_id),
-            ciphertext=ciphertext,
-            aes_iv=aes_iv,
-            encrypted_key_sender=encrypted_key_sender,
-            encrypted_key_receiver=encrypted_key_receiver,
-            timestamp=int(time.time())
-        )
-        db.session.add(msg)
-        db.session.commit()
-        
-        payload = msg.to_dict()
-        
-        # 廣播至發送者與接收者的個人專屬房間
         socketio.emit('receive_message', payload, room=f"user_{recipient_id}")
         socketio.emit('receive_message', payload, room=f"user_{sender_id}")
     except Exception as e:
         db.session.rollback()
         print(f"發送訊息發生錯誤: {e}")
         emit('error', {'message': '資料庫儲存失敗'})
+
+# --- Socket.IO: 已讀回訖處理 ---
+@socketio.on('mark_read')
+def handle_mark_read(data):
+    from flask import session
+    user_id = session.get('socket_user_id')  # 當前正在看訊息的人（接收者）
+    sender_id = data.get('sender_id')      # 訊息原本的發送者
+    
+    if not user_id or not sender_id:
+        return
+        
+    try:
+        unread_msgs = Message.query.filter_by(
+            sender_id=int(sender_id),
+            receiver_id=int(user_id),
+            is_read=False
+        ).all()
+        
+        if unread_msgs:
+            for msg in unread_msgs:
+                msg.is_read = True
+            db.session.commit()
+            
+            socketio.emit('messages_read', {'reader_id': int(user_id)}, room=f"user_{sender_id}")
+    except Exception as e:
+        db.session.rollback()
+        print(f"標記已讀失敗: {e}")
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)

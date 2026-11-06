@@ -36,6 +36,10 @@ class Message(db.Model):
     encrypted_key_sender = db.Column(db.Text, nullable=False)
     encrypted_key_receiver = db.Column(db.Text, nullable=False)
     timestamp = db.Column(db.Integer, nullable=False)
+    
+    # 💡 新增已讀狀態欄位（預設為 False 未讀）
+    is_read = db.Column(db.Boolean, default=False)
+
     # Relationships
     sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_messages')
     receiver = db.relationship('User', foreign_keys=[receiver_id], backref='received_messages')
@@ -51,5 +55,6 @@ class Message(db.Model):
             'aes_iv': self.aes_iv,
             'encrypted_key_sender': self.encrypted_key_sender,
             'encrypted_key_receiver': self.encrypted_key_receiver,
-            'timestamp': self.timestamp
+            'timestamp': self.timestamp,
+            'is_read': self.is_read  # 💡 確保封裝成字典時包含已讀狀態
         }

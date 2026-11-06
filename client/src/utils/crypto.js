@@ -64,6 +64,25 @@ export async function importPublicKey(spkiBase64) {
     );
 }
 
+// 💡 1-1. Export Private Key to JWK (For Local Storage Persistence)
+export async function exportPrivateKeyToJwk(privateKey) {
+    return await window.crypto.subtle.exportKey("jwk", privateKey);
+}
+
+// 💡 1-2. Import Private Key from JWK (For Session Restoration after Page Refresh)
+export async function importPrivateKeyFromJwk(jwkObj) {
+    return await window.crypto.subtle.importKey(
+        "jwk",
+        jwkObj,
+        {
+            name: "RSA-OAEP",
+            hash: "SHA-256"
+        },
+        true,
+        ["decrypt"]
+    );
+}
+
 // 2. PBKDF2 Key Derivation (Passphrase -> KEK)
 export async function deriveKek(passphrase, salt) {
     const encoder = new TextEncoder();

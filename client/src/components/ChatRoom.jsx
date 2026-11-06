@@ -3,6 +3,8 @@ import { io } from 'socket.io-client';
 import { encryptMessage, decryptMessage } from '../utils/crypto';
 import SecurityVisualizer from './SecurityVisualizer';
 
+const API_BASE_URL = 'http://127.0.0.1:5000';
+
 export default function ChatRoom({ session, onLogout }) {
     const { token, user, privateKey } = session;
     
@@ -10,6 +12,9 @@ export default function ChatRoom({ session, onLogout }) {
     const [activeContact, setActiveContact] = useState(null);
     const [messages, setMessages] = useState({}); // format: { contactId: [messageObjects] }
     const [inputMessage, setInputMessage] = useState('');
+    
+    // 💡 閱後即焚銷毀時間狀態（秒數，預設 60 秒）
+    const [destructTime, setDestructTime] = useState(60);
     
     // Security Visualizer State
     const [visualizerEnabled, setVisualizerEnabled] = useState(true);
@@ -31,7 +36,7 @@ export default function ChatRoom({ session, onLogout }) {
     useEffect(() => {
         const fetchFriends = async () => {
             try {
-                const response = await fetch('http://localhost:5000/api/friends', {
+                const response = await fetch(`${API_BASE_URL}/api/friends`, {
                     headers: {
                         'Authorization': `Bearer ${token}`
                     }
@@ -51,12 +56,15 @@ export default function ChatRoom({ session, onLogout }) {
     useEffect(() => {
         if (!activeContact) return;
         
+        // 💡 當切換到該聊天室時，主動發送已讀標記
+        if (socketRef.current) {
+            socketRef.current.emit('mark_read', { sender_id: activeContact.id });
+        }
+        
         const fetchHistory = async () => {
             try {
-                const response = await fetch(`http://localhost:5000/api/messages/${activeContact.id}`, {
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
+                const response = await fetch(`${API_BASE_URL}/api/messages/${activeContact.id}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (response.ok) {
                     const dbMessages = await response.json();
@@ -103,10 +111,8 @@ export default function ChatRoom({ session, onLogout }) {
 
     // 3. Socket.IO Setup
     useEffect(() => {
-        socketRef.current = io('http://localhost:5000', {
-            auth: {
-                token: token
-            }
+        socketRef.current = io(API_BASE_URL, {
+            auth: { token: token }
         });
 
         socketRef.current.on('connect', () => {
@@ -142,11 +148,16 @@ export default function ChatRoom({ session, onLogout }) {
                     privateKey
                 );
 
+                const receiveDestructSec = 60;
+                const expireAtTime = receiveDestructSec > 0 ? Date.now() + (receiveDestructSec * 1000) : null;
+
                 const newMsg = {
                     ...msg,
                     plaintext: decResult.plaintext,
                     debug: decResult.debug,
-                    isDecryptionError: false
+                    isDecryptionError: false,
+                    expireAt: expireAtTime,
+                    duration: receiveDestructSec
                 };
 
                 if (visualizerEnabled) {
@@ -202,6 +213,24 @@ export default function ChatRoom({ session, onLogout }) {
             console.log("Message saved and sync complete", msg);
         });
 
+        // 💡 監聽對方已讀通知（正確包在 useEffect 內）
+        socketRef.current.on('messages_read', (data) => {
+            const readerId = data.reader_id;
+            setMessages(prev => {
+                const contactChat = prev[readerId] || [];
+                const updatedList = contactChat.map(msg => {
+                    if (msg.sender_id === user.id) {
+                        return { ...msg, is_read: true };
+                    }
+                    return msg;
+                });
+                return {
+                    ...prev,
+                    [readerId]: updatedList
+                };
+            });
+        });
+
         return () => {
             if (socketRef.current) {
                 socketRef.current.emit('leave', { user_id: user.id });
@@ -209,6 +238,34 @@ export default function ChatRoom({ session, onLogout }) {
             }
         };
     }, [privateKey, user.id, visualizerEnabled, token]);
+
+    // 💡 閱後即焚：每秒自動掃描並移除過期訊息
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const now = Date.now();
+            setMessages(prev => {
+                let hasChanges = false;
+                const updatedMessages = { ...prev };
+
+                Object.keys(updatedMessages).forEach(contactId => {
+                    const chatList = updatedMessages[contactId];
+                    const validList = chatList.filter(msg => {
+                        if (!msg.expireAt) return true;
+                        return now < msg.expireAt;
+                    });
+
+                    if (validList.length !== chatList.length) {
+                        hasChanges = true;
+                        updatedMessages[contactId] = validList;
+                    }
+                });
+
+                return hasChanges ? updatedMessages : prev;
+            });
+        }, 1000);
+
+        return () => clearInterval(interval);
+    }, []);
 
     useEffect(() => {
         scrollToBottom();
@@ -268,6 +325,8 @@ export default function ChatRoom({ session, onLogout }) {
             
             socketRef.current.emit('send_message', socketPayload);
 
+            const expireAtTime = destructTime > 0 ? Date.now() + (destructTime * 1000) : null;
+
             const tempLocalMsg = {
                 id: Date.now(),
                 sender_id: user.id,
@@ -278,7 +337,10 @@ export default function ChatRoom({ session, onLogout }) {
                 encrypted_key_receiver: encResult.payload.encrypted_key_receiver,
                 plaintext: plaintextToSend,
                 debug: encResult.debug,
-                timestamp: new Date().toISOString()
+                timestamp: Date.now(),
+                expireAt: expireAtTime,
+                duration: destructTime,
+                is_read: false
             };
 
             setMessages(prev => {
@@ -336,6 +398,22 @@ export default function ChatRoom({ session, onLogout }) {
                             視覺化面板 {visualizerEnabled ? '開' : '關'}
                         </label>
                     </div>
+
+                    {/* 💡 訊息銷毀時間設定選單 */}
+                    <div style={{ marginTop: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#94a3b8' }}>
+                        <span>🔥 訊息銷毀時間:</span>
+                        <select 
+                            value={destructTime} 
+                            onChange={(e) => setDestructTime(Number(e.target.value))}
+                            style={{ background: '#1e293b', color: '#fff', border: '1px solid #334155', borderRadius: '4px', padding: '2px 6px', fontSize: '12px' }}
+                        >
+                            <option value={0}>永不銷毀</option>
+                            <option value={30}>30 秒</option>
+                            <option value={60}>60 秒</option>
+                            <option value={300}>300 秒</option>
+                            <option value={86400}>1天</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div style={{ padding: '10px 16px', borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}>
@@ -351,7 +429,7 @@ export default function ChatRoom({ session, onLogout }) {
                         onClick={async () => {
                             const username = document.getElementById('friend-input').value;
                             if (!username) return;
-                            const res = await fetch('http://localhost:5000/api/friends/add', {
+                            const res = await fetch(`${API_BASE_URL}/api/friends/add`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                                 body: JSON.stringify({ username })
@@ -464,9 +542,23 @@ export default function ChatRoom({ session, onLogout }) {
                                         <div className="message-meta">
                                             <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                             
+                                            {/* 💡 已讀 / 送出狀態 */}
+                                            {isSentByMe && (
+                                                <span style={{ fontSize: '10px', color: msg.is_read ? '#10b981' : '#94a3b8', marginLeft: '6px', fontWeight: 'bold' }}>
+                                                    {msg.is_read ? '✓✓ 已讀' : '✓ 送出'}
+                                                </span>
+                                            )}
+
+                                            {/* 閱後即焚倒數標籤 */}
+                                            {msg.expireAt && (
+                                                <span style={{ fontSize: '10px', color: '#f87171', marginLeft: '6px', fontWeight: 'bold' }}>
+                                                    🔥 {Math.max(0, Math.ceil((msg.expireAt - Date.now()) / 1000))}s
+                                                </span>
+                                            )}
+                                            
                                             {visualizerEnabled && msg.debug && (
                                                 <span 
-                                                    style={{ color: '#818cf8', cursor: 'pointer', fontWeight: 'bold' }}
+                                                    style={{ color: '#818cf8', cursor: 'pointer', fontWeight: 'bold', marginLeft: '6px' }}
                                                     onClick={() => setExpandedCryptoMsgId(isExpanded ? null : msg.id)}
                                                 >
                                                     {isExpanded ? '▲ 隱藏密碼細節' : '▼ 🔐 查看密碼細節'}
