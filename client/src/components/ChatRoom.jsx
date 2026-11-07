@@ -4,7 +4,15 @@ import { encryptMessage, decryptMessage } from '../utils/crypto';
 import SecurityVisualizer from './SecurityVisualizer';
 import DesktopPet from './DesktopPet';
 
-const API_BASE_URL = 'http://127.0.0.1:5000';
+// 💡 統一在這裡定義 Ngrok 公開網址
+const API_BASE_URL = 'https://finance-bronzing-turkey.ngrok-free.dev';
+
+// 💡 初始化 Socket.io 時加上 headers 略過 ngrok 警告網頁
+const socket = io(API_BASE_URL, {
+    extraHeaders: {
+        "ngrok-skip-browser-warning": "true"
+    }
+});
 
 export default function ChatRoom({ session, onLogout }) {
     const { token, user, privateKey } = session;
@@ -39,7 +47,8 @@ export default function ChatRoom({ session, onLogout }) {
             try {
                 const response = await fetch(`${API_BASE_URL}/api/friends`, {
                     headers: {
-                        'Authorization': `Bearer ${token}`
+                        'Authorization': `Bearer ${token}`,
+                        'ngrok-skip-browser-warning': 'true'
                     }
                 });
                 if (response.ok) {
@@ -65,7 +74,10 @@ export default function ChatRoom({ session, onLogout }) {
         const fetchHistory = async () => {
             try {
                 const response = await fetch(`${API_BASE_URL}/api/messages/${activeContact.id}`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    headers: { 
+                        'Authorization': `Bearer ${token}`,
+                        'ngrok-skip-browser-warning': 'true'
+                    }
                 });
                 if (response.ok) {
                     const dbMessages = await response.json();
@@ -113,7 +125,10 @@ export default function ChatRoom({ session, onLogout }) {
     // 3. Socket.IO Setup
     useEffect(() => {
         socketRef.current = io(API_BASE_URL, {
-            auth: { token: token }
+            auth: { token: token },
+            extraHeaders: {
+                "ngrok-skip-browser-warning": "true"
+            }
         });
 
         socketRef.current.on('connect', () => {
@@ -432,7 +447,11 @@ export default function ChatRoom({ session, onLogout }) {
                             if (!username) return;
                             const res = await fetch(`${API_BASE_URL}/api/friends/add`, {
                                 method: 'POST',
-                                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                                headers: { 
+                                    'Content-Type': 'application/json', 
+                                    'Authorization': `Bearer ${token}`,
+                                    'ngrok-skip-browser-warning': 'true'
+                                },
                                 body: JSON.stringify({ username })
                             });
                             if (res.ok) {

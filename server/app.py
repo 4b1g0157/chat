@@ -16,13 +16,11 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:/
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'jwt-secret-key-change-this-in-production')
 
-# 啟用完整的跨域存取 (包含 API 與 SocketIO)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 db.init_app(app)
 jwt = JWTManager(app)
 
-# 初始化 SocketIO 並開放全網域連線
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', logger=True, engineio_logger=True)
 
 with app.app_context():
@@ -94,7 +92,6 @@ def get_users():
     users = User.query.filter(User.id != current_user_id).all()
     return jsonify([u.to_dict() for u in users]), 200
 
-# 💡 嚴格模式：只回傳真正手動加過好友的使用者清單
 @app.route('/api/friends', methods=['GET'])
 @jwt_required()
 def get_friends():
@@ -122,7 +119,6 @@ def add_friend():
     if target_user.id == current_user_id:
         return jsonify({'error': '不能將自己加為好友'}), 400
         
-    # 檢查是否已經在好友列表中
     existing_friendship = Friendship.query.filter_by(user_id=current_user_id, friend_id=target_user.id).first()
     if existing_friendship:
         return jsonify({'error': '該使用者已經在您的好友列表中'}), 400
@@ -196,7 +192,6 @@ def handle_send_message(data):
         return
 
     recipient_id = data.get('recipient_id') or data.get('receiver_id')
-    
     message_type = data.get('message_type', 'text')
     file_name = data.get('file_name')
     
@@ -233,12 +228,11 @@ def handle_send_message(data):
         print(f"發送訊息發生錯誤: {e}")
         emit('error', {'message': '資料庫儲存失敗'})
 
-# --- Socket.IO: 已讀回訖處理 ---
 @socketio.on('mark_read')
 def handle_mark_read(data):
     from flask import session
-    user_id = session.get('socket_user_id')  # 當前正在看訊息的人（接收者）
-    sender_id = data.get('sender_id')      # 訊息原本的發送者
+    user_id = session.get('socket_user_id')
+    sender_id = data.get('sender_id')
     
     if not user_id or not sender_id:
         return
