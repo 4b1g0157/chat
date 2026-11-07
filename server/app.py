@@ -8,7 +8,7 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity, decode_token
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.security import generate_password_hash, check_password_hash
-from models import db, User, Message
+from models import db, User, Message, Friendship
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-change-this-in-production')
@@ -94,12 +94,16 @@ def get_users():
     users = User.query.filter(User.id != current_user_id).all()
     return jsonify([u.to_dict() for u in users]), 200
 
+# 💡 嚴格模式：只回傳真正手動加過好友的使用者清單
 @app.route('/api/friends', methods=['GET'])
 @jwt_required()
 def get_friends():
     current_user_id = int(get_jwt_identity())
-    users = User.query.filter(User.id != current_user_id).all()
-    return jsonify([u.to_dict() for u in users]), 200
+    friendships = Friendship.query.filter_by(user_id=current_user_id).all()
+    friend_ids = [f.friend_id for f in friendships]
+    
+    friends = User.query.filter(User.id.in_(friend_ids)).all() if friend_ids else []
+    return jsonify([u.to_dict() for u in friends]), 200
 
 @app.route('/api/friends/add', methods=['POST'])
 @jwt_required()
@@ -118,7 +122,19 @@ def add_friend():
     if target_user.id == current_user_id:
         return jsonify({'error': '不能將自己加為好友'}), 400
         
-    return jsonify({'message': '加好友成功', 'friend': target_user.to_dict()}), 200
+    # 檢查是否已經在好友列表中
+    existing_friendship = Friendship.query.filter_by(user_id=current_user_id, friend_id=target_user.id).first()
+    if existing_friendship:
+        return jsonify({'error': '該使用者已經在您的好友列表中'}), 400
+
+    try:
+        friendship = Friendship(user_id=current_user_id, friend_id=target_user.id, timestamp=int(time.time()))
+        db.session.add(friendship)
+        db.session.commit()
+        return jsonify({'message': '加好友成功', 'friend': target_user.to_dict()}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': '加好友失敗'}), 500
 
 @app.route('/api/users/<username>/public-key', methods=['GET'])
 @jwt_required()

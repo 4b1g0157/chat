@@ -21,6 +21,27 @@ class User(db.Model):
             'created_at': self.created_at.isoformat()
         }
 
+# 💡 新增好友關係資料表模型
+class Friendship(db.Model):
+    __tablename__ = 'friendships'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    friend_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    timestamp = db.Column(db.Integer, default=0)
+
+    # 建立關聯，方便未來若需要反向查詢
+    user = db.relationship('User', foreign_keys=[user_id], backref='friendships')
+    friend = db.relationship('User', foreign_keys=[friend_id], backref='friend_of')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'friend_id': self.friend_id,
+            'timestamp': self.timestamp
+        }
+
 class Message(db.Model):
     __tablename__ = 'messages'
     
@@ -37,7 +58,7 @@ class Message(db.Model):
     encrypted_key_receiver = db.Column(db.Text, nullable=False)
     timestamp = db.Column(db.Integer, nullable=False)
     
-    # 💡 新增已讀狀態欄位（預設為 False 未讀）
+    # 💡 已讀狀態欄位（預設為 False 未讀）
     is_read = db.Column(db.Boolean, default=False)
 
     # Relationships
