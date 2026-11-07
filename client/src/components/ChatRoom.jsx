@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { encryptMessage, decryptMessage } from '../utils/crypto';
 import SecurityVisualizer from './SecurityVisualizer';
+import DesktopPet from './DesktopPet';
 
 const API_BASE_URL = 'http://127.0.0.1:5000';
 
@@ -213,7 +214,7 @@ export default function ChatRoom({ session, onLogout }) {
             console.log("Message saved and sync complete", msg);
         });
 
-        // 💡 監聽對方已讀通知（正確包在 useEffect 內）
+        // 💡 監聽對方已讀通知
         socketRef.current.on('messages_read', (data) => {
             const readerId = data.reader_id;
             setMessages(prev => {
@@ -664,6 +665,9 @@ export default function ChatRoom({ session, onLogout }) {
                     visualData={latestVisualData}
                 />
             )}
+
+            {/* 💡 4. 加入桌寵元件 */}
+            <DesktopPet securityStatus={activeVisualStep !== null ? 'decrypt_error' : 'secure'} />
         </div>
     );
 }
