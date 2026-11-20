@@ -6,6 +6,12 @@ import DesktopPet from './DesktopPet';
 
 const API_BASE_URL = window.location.origin;
 
+const formatTimestampToTime = (timestamp) => {
+    if (!timestamp) return '';
+    const tsMs = timestamp < 1e12 ? timestamp * 1000 : timestamp;
+    return new Date(tsMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+};
+
 export default function ChatRoom({ session, onLogout }) {
     const { token, user, privateKey } = session;
 
@@ -546,7 +552,7 @@ export default function ChatRoom({ session, onLogout }) {
                                         </div>
 
                                         <div className="message-meta">
-                                            <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                            <span>{formatTimestampToTime(msg.timestamp)}</span>
 
                                             {isSentByMe && (
                                                 <span style={{ fontSize: '10px', color: msg.is_read ? '#10b981' : '#94a3b8', marginLeft: '6px', fontWeight: 'bold' }}>
