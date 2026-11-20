@@ -4,44 +4,32 @@ import { encryptMessage, decryptMessage } from '../utils/crypto';
 import SecurityVisualizer from './SecurityVisualizer';
 import DesktopPet from './DesktopPet';
 
-// 💡 統一在這裡定義 Ngrok 公開網址
-const API_BASE_URL = 'https://finance-bronzing-turkey.ngrok-free.dev';
-
-// 💡 初始化 Socket.io 時加上 headers 略過 ngrok 警告網頁
-const socket = io(API_BASE_URL, {
-    extraHeaders: {
-        "ngrok-skip-browser-warning": "true"
-    }
-});
+const API_BASE_URL = window.location.origin;
 
 export default function ChatRoom({ session, onLogout }) {
     const { token, user, privateKey } = session;
-    
+
     const [contacts, setContacts] = useState([]);
     const [activeContact, setActiveContact] = useState(null);
-    const [messages, setMessages] = useState({}); // format: { contactId: [messageObjects] }
+    const [messages, setMessages] = useState({});
     const [inputMessage, setInputMessage] = useState('');
-    
-    // 💡 閱後即焚銷毀時間狀態（秒數，預設 60 秒）
+
     const [destructTime, setDestructTime] = useState(60);
-    
-    // Security Visualizer State
+
     const [visualizerEnabled, setVisualizerEnabled] = useState(true);
     const [activeVisualStep, setActiveVisualStep] = useState(null);
     const [latestVisualData, setLatestVisualData] = useState(null);
-    
-    // Toggle state for individual message cards
+
     const [expandedCryptoMsgId, setExpandedCryptoMsgId] = useState(null);
 
     const socketRef = useRef(null);
     const messagesEndRef = useRef(null);
 
-    // Scroll to bottom helper
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     };
 
-    // 1. Fetch Users List
+    // 1. Fetch Friends List
     useEffect(() => {
         const fetchFriends = async () => {
             try {
@@ -65,35 +53,34 @@ export default function ChatRoom({ session, onLogout }) {
     // 2. Fetch Chat History when activeContact changes
     useEffect(() => {
         if (!activeContact) return;
-        
-        // 💡 當切換到該聊天室時，主動發送已讀標記
+
         if (socketRef.current) {
             socketRef.current.emit('mark_read', { sender_id: activeContact.id });
         }
-        
+
         const fetchHistory = async () => {
             try {
                 const response = await fetch(`${API_BASE_URL}/api/messages/${activeContact.id}`, {
-                    headers: { 
+                    headers: {
                         'Authorization': `Bearer ${token}`,
                         'ngrok-skip-browser-warning': 'true'
                     }
                 });
                 if (response.ok) {
                     const dbMessages = await response.json();
-                    
+
                     const decryptedMessages = await Promise.all(dbMessages.map(async (msg) => {
                         try {
                             const isSentByMe = msg.sender_id === user.id;
                             const encryptedKey = isSentByMe ? msg.encrypted_key_sender : msg.encrypted_key_receiver;
-                            
+
                             const decResult = await decryptMessage(
                                 msg.ciphertext,
                                 msg.aes_iv,
                                 encryptedKey,
                                 privateKey
                             );
-                            
+
                             return {
                                 ...msg,
                                 plaintext: decResult.plaintext,
@@ -109,7 +96,7 @@ export default function ChatRoom({ session, onLogout }) {
                             };
                         }
                     }));
-                    
+
                     setMessages(prev => ({
                         ...prev,
                         [activeContact.id]: decryptedMessages
@@ -138,17 +125,21 @@ export default function ChatRoom({ session, onLogout }) {
 
         socketRef.current.on('receive_message', async (msg) => {
             console.log("Socket received encrypted message", msg);
-            
-            if (visualizerEnabled) {
+
+            const isSentByMe = msg.sender_id === user.id;
+            const keyToDecrypt = isSentByMe ? msg.encrypted_key_sender : msg.encrypted_key_receiver;
+            const targetChatId = isSentByMe ? msg.receiver_id : msg.sender_id;
+
+            if (visualizerEnabled && !isSentByMe) {
                 setLatestVisualData({
                     plaintext: '...',
                     aesKeyHex: '...',
                     aesIvHex: msg.aes_iv.substring(0, 16) + '...',
-                    encryptedKeyReceiverBase64: msg.encrypted_key_receiver.substring(0, 20) + '...',
+                    encryptedKeyReceiverBase64: keyToDecrypt.substring(0, 20) + '...',
                     ciphertextBase64: msg.ciphertext.substring(0, 20) + '...'
                 });
-                
-                setActiveVisualStep(3); 
+
+                setActiveVisualStep(3);
                 await new Promise(r => setTimeout(r, 700));
                 setActiveVisualStep(4);
                 await new Promise(r => setTimeout(r, 700));
@@ -160,7 +151,7 @@ export default function ChatRoom({ session, onLogout }) {
                 const decResult = await decryptMessage(
                     msg.ciphertext,
                     msg.aes_iv,
-                    msg.encrypted_key_receiver,
+                    keyToDecrypt,
                     privateKey
                 );
 
@@ -176,30 +167,29 @@ export default function ChatRoom({ session, onLogout }) {
                     duration: receiveDestructSec
                 };
 
-                if (visualizerEnabled) {
+                if (visualizerEnabled && !isSentByMe) {
                     setLatestVisualData({
                         plaintext: decResult.plaintext,
                         aesKeyHex: decResult.debug.rawAesKeyHex,
                         aesIvHex: decResult.debug.aesIvHex,
-                        encryptedKeyReceiverBase64: msg.encrypted_key_receiver,
+                        encryptedKeyReceiverBase64: keyToDecrypt,
                         ciphertextBase64: msg.ciphertext
                     });
                 }
 
                 setMessages(prev => {
-                    const chatHistory = prev[msg.sender_id] || [];
-                    const exists = chatHistory.some(m => 
-                        (msg.id && m.id === msg.id) || 
+                    const chatHistory = prev[targetChatId] || [];
+                    const exists = chatHistory.some(m =>
+                        (msg.id && m.id === msg.id) ||
                         (m.ciphertext === msg.ciphertext)
                     );
                     if (exists) return prev;
 
                     return {
                         ...prev,
-                        [msg.sender_id]: [...chatHistory, newMsg]
+                        [targetChatId]: [...chatHistory, newMsg]
                     };
                 });
-
             } catch (err) {
                 console.error("Failed to decrypt incoming message", err);
                 const errorMsg = {
@@ -208,20 +198,22 @@ export default function ChatRoom({ session, onLogout }) {
                     isDecryptionError: true
                 };
                 setMessages(prev => {
-                    const chatHistory = prev[msg.sender_id] || [];
-                    const exists = chatHistory.some(m => 
-                        (msg.id && m.id === msg.id) || 
+                    const chatHistory = prev[targetChatId] || [];
+                    const exists = chatHistory.some(m =>
+                        (msg.id && m.id === msg.id) ||
                         (m.ciphertext === msg.ciphertext)
                     );
                     if (exists) return prev;
 
                     return {
                         ...prev,
-                        [msg.sender_id]: [...chatHistory, errorMsg]
+                        [targetChatId]: [...chatHistory, errorMsg]
                     };
                 });
             } finally {
-                setActiveVisualStep(null);
+                if (!isSentByMe) {
+                    setActiveVisualStep(null);
+                }
             }
         });
 
@@ -229,7 +221,6 @@ export default function ChatRoom({ session, onLogout }) {
             console.log("Message saved and sync complete", msg);
         });
 
-        // 💡 監聽對方已讀通知
         socketRef.current.on('messages_read', (data) => {
             const readerId = data.reader_id;
             setMessages(prev => {
@@ -255,7 +246,7 @@ export default function ChatRoom({ session, onLogout }) {
         };
     }, [privateKey, user.id, visualizerEnabled, token]);
 
-    // 💡 閱後即焚：每秒自動掃描並移除過期訊息
+    // 4. Auto-remove expired messages
     useEffect(() => {
         const interval = setInterval(() => {
             const now = Date.now();
@@ -287,7 +278,6 @@ export default function ChatRoom({ session, onLogout }) {
         scrollToBottom();
     }, [messages, activeContact]);
 
-    // 4. Send Encrypted Message Core Function
     const sendEncryptedContent = async (plaintextToSend) => {
         if (!plaintextToSend.trim() || !activeContact) return;
 
@@ -300,7 +290,7 @@ export default function ChatRoom({ session, onLogout }) {
                     encryptedKeyReceiverBase64: '等待加密...',
                     ciphertextBase64: '等待加密...'
                 });
-                
+
                 setActiveVisualStep(0);
                 await new Promise(r => setTimeout(r, 600));
             }
@@ -319,13 +309,13 @@ export default function ChatRoom({ session, onLogout }) {
                     encryptedKeyReceiverBase64: encResult.payload.encrypted_key_receiver,
                     ciphertextBase64: encResult.payload.ciphertext
                 });
-                
+
                 setActiveVisualStep(1);
                 await new Promise(r => setTimeout(r, 600));
-                
+
                 setActiveVisualStep(2);
                 await new Promise(r => setTimeout(r, 600));
-                
+
                 setActiveVisualStep(3);
                 await new Promise(r => setTimeout(r, 400));
             }
@@ -338,7 +328,7 @@ export default function ChatRoom({ session, onLogout }) {
                 encrypted_key_sender: encResult.payload.encrypted_key_sender,
                 encrypted_key_receiver: encResult.payload.encrypted_key_receiver
             };
-            
+
             socketRef.current.emit('send_message', socketPayload);
 
             const expireAtTime = destructTime > 0 ? Date.now() + (destructTime * 1000) : null;
@@ -366,7 +356,6 @@ export default function ChatRoom({ session, onLogout }) {
                     [activeContact.id]: [...chatHistory, tempLocalMsg]
                 };
             });
-
         } catch (err) {
             console.error("Encryption and send failed", err);
         } finally {
@@ -386,7 +375,6 @@ export default function ChatRoom({ session, onLogout }) {
 
     return (
         <div className="glass-panel chat-app-container animated-item">
-            {/* 1. Sidebar contacts */}
             <div className="sidebar">
                 <div className="sidebar-header">
                     <div className="user-profile">
@@ -415,11 +403,10 @@ export default function ChatRoom({ session, onLogout }) {
                         </label>
                     </div>
 
-                    {/* 💡 訊息銷毀時間設定選單 */}
                     <div style={{ marginTop: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#94a3b8' }}>
                         <span>🔥 訊息銷毀時間:</span>
-                        <select 
-                            value={destructTime} 
+                        <select
+                            value={destructTime}
                             onChange={(e) => setDestructTime(Number(e.target.value))}
                             style={{ background: '#1e293b', color: '#fff', border: '1px solid #334155', borderRadius: '4px', padding: '2px 6px', fontSize: '12px' }}
                         >
@@ -433,22 +420,22 @@ export default function ChatRoom({ session, onLogout }) {
                 </div>
 
                 <div style={{ padding: '10px 16px', borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}>
-                    <input 
-                        type="text" 
-                        placeholder="輸入使用者名稱加好友..." 
+                    <input
+                        type="text"
+                        placeholder="輸入使用者名稱加好友..."
                         id="friend-input"
                         style={{ width: '100%', padding: '6px', borderRadius: '4px', background: '#1e293b', border: '1px solid #334155', color: '#fff' }}
                     />
-                    <button 
-                        className="btn-primary" 
+                    <button
+                        className="btn-primary"
                         style={{ width: '100%', marginTop: '6px', padding: '6px', fontSize: '12px' }}
                         onClick={async () => {
                             const username = document.getElementById('friend-input').value;
                             if (!username) return;
                             const res = await fetch(`${API_BASE_URL}/api/friends/add`, {
                                 method: 'POST',
-                                headers: { 
-                                    'Content-Type': 'application/json', 
+                                headers: {
+                                    'Content-Type': 'application/json',
                                     'Authorization': `Bearer ${token}`,
                                     'ngrok-skip-browser-warning': 'true'
                                 },
@@ -456,7 +443,7 @@ export default function ChatRoom({ session, onLogout }) {
                             });
                             if (res.ok) {
                                 alert('加好友成功！');
-                                window.location.reload(); 
+                                window.location.reload();
                             } else {
                                 const err = await res.json();
                                 alert(err.error || '加好友失敗');
@@ -507,7 +494,6 @@ export default function ChatRoom({ session, onLogout }) {
                 </div>
             </div>
 
-            {/* 2. Main Chat Panel */}
             <div className="main-chat-area">
                 {activeContact ? (
                     <>
@@ -529,10 +515,10 @@ export default function ChatRoom({ session, onLogout }) {
                             {currentChatMessages.map((msg, index) => {
                                 const isSentByMe = msg.sender_id === user.id;
                                 const isExpanded = expandedCryptoMsgId === msg.id;
-                                
+
                                 return (
                                     <div key={index} className={`message-row ${isSentByMe ? 'sent' : 'received'}`}>
-                                       <div className="message-bubble">
+                                        <div className="message-bubble">
                                             {msg.plaintext && msg.plaintext.startsWith('<file name=') ? (() => {
                                                 const match = msg.plaintext.match(/name="([^"]+)" data="([^"]+)"/);
                                                 if (match) {
@@ -558,26 +544,24 @@ export default function ChatRoom({ session, onLogout }) {
                                                 msg.plaintext
                                             )}
                                         </div>
-                                        
+
                                         <div className="message-meta">
                                             <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                            
-                                            {/* 💡 已讀 / 送出狀態 */}
+
                                             {isSentByMe && (
                                                 <span style={{ fontSize: '10px', color: msg.is_read ? '#10b981' : '#94a3b8', marginLeft: '6px', fontWeight: 'bold' }}>
                                                     {msg.is_read ? '✓✓ 已讀' : '✓ 送出'}
                                                 </span>
                                             )}
 
-                                            {/* 閱後即焚倒數標籤 */}
                                             {msg.expireAt && (
                                                 <span style={{ fontSize: '10px', color: '#f87171', marginLeft: '6px', fontWeight: 'bold' }}>
                                                     🔥 {Math.max(0, Math.ceil((msg.expireAt - Date.now()) / 1000))}s
                                                 </span>
                                             )}
-                                            
+
                                             {visualizerEnabled && msg.debug && (
-                                                <span 
+                                                <span
                                                     style={{ color: '#818cf8', cursor: 'pointer', fontWeight: 'bold', marginLeft: '6px' }}
                                                     onClick={() => setExpandedCryptoMsgId(isExpanded ? null : msg.id)}
                                                 >
@@ -618,10 +602,10 @@ export default function ChatRoom({ session, onLogout }) {
                         </div>
 
                         <form onSubmit={handleSendMessage} className="chat-input-area" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            <input 
-                                type="file" 
-                                id="file-input" 
-                                style={{ display: 'none' }} 
+                            <input
+                                type="file"
+                                id="file-input"
+                                style={{ display: 'none' }}
                                 onChange={async (e) => {
                                     const file = e.target.files[0];
                                     if (!file || !activeContact) return;
@@ -641,8 +625,8 @@ export default function ChatRoom({ session, onLogout }) {
                                 }}
                             />
 
-                            <button 
-                                type="button" 
+                            <button
+                                type="button"
                                 onClick={() => document.getElementById('file-input').click()}
                                 style={{ background: 'transparent', border: 'none', color: '#818cf8', cursor: 'pointer', fontSize: '20px' }}
                                 title="上傳圖片或檔案"
@@ -677,7 +661,6 @@ export default function ChatRoom({ session, onLogout }) {
                 )}
             </div>
 
-            {/* 3. Right Visualizer Pane */}
             {visualizerEnabled && (
                 <SecurityVisualizer
                     activeStep={activeVisualStep}
@@ -685,7 +668,6 @@ export default function ChatRoom({ session, onLogout }) {
                 />
             )}
 
-            {/* 💡 4. 加入桌寵元件 */}
             <DesktopPet securityStatus={activeVisualStep !== null ? 'decrypt_error' : 'secure'} />
         </div>
     );

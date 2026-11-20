@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { generateRsaKeyPair, exportPublicKey, encryptPrivateKey } from '../utils/crypto';
 
+const API_BASE_URL = window.location.origin;
+
 export default function Register({ onSwitchToLogin }) {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -37,10 +39,11 @@ export default function Register({ onSwitchToLogin }) {
             const encryptedPrivKeyJson = await encryptPrivateKey(keys.privateKey, passphrase);
             
             // Step 4: Send payload to Flask registration API
-            const response = await fetch('http://localhost:5000/api/register', {
+            const response = await fetch(`${API_BASE_URL}/api/register`, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'ngrok-skip-browser-warning': 'true'
                 },
                 body: JSON.stringify({
                     username,

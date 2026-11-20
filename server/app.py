@@ -3,14 +3,14 @@ eventlet.monkey_patch()
 import os
 import time
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity, decode_token
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.security import generate_password_hash, check_password_hash
 from models import db, User, Message, Friendship
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='../client/dist', static_url_path='/')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-change-this-in-production')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///e2ee_chat.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -253,6 +253,17 @@ def handle_mark_read(data):
     except Exception as e:
         db.session.rollback()
         print(f"標記已讀失敗: {e}")
+
+# --- 前端靜態檔案託管（SPA Fallback） ---
+
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_frontend(path):
+    if path != "" and app.static_folder and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    if app.static_folder and os.path.exists(os.path.join(app.static_folder, 'index.html')):
+        return send_from_directory(app.static_folder, 'index.html')
+    return jsonify({'error': 'Frontend build not found. Please run `npm run build` in client/'}), 404
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)

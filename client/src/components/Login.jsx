@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { decryptPrivateKey, exportPrivateKeyToJwk } from '../utils/crypto';
 
+const API_BASE_URL = window.location.origin;
+
 export default function Login({ onLoginSuccess, onSwitchToRegister }) {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -21,10 +23,11 @@ export default function Login({ onLoginSuccess, onSwitchToRegister }) {
 
         try {
             // Step 1: Authenticate with Flask API
-            const response = await fetch('http://localhost:5000/api/login', {
+            const response = await fetch(`${API_BASE_URL}/api/login`, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'ngrok-skip-browser-warning': 'true'
                 },
                 body: JSON.stringify({ username, password })
             });
